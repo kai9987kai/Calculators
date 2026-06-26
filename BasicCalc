@@ -1,49 +1,367 @@
-from tkinter import *
+import ast
+import operator
+import tkinter as tk
+from decimal import Decimal, DivisionByZero, InvalidOperation, getcontext
 
-root = Tk()
-root.title("Calculator")
+getcontext().prec = 28
 
-Operator = ""
-TextIn = StringVar()
 
-def BtnClick(Intergers):
-    global Operator
-    Operator = Operator + str(Intergers)
-    TextIn.set(Operator)
+class SafeExpressionError(Exception):
+    """Raised when an expression contains unsupported or unsafe content."""
 
-def BtnClear():
-    global Operator
-    Operator = ""
-    TextIn.set("")
 
-def BtnEquals():
-    global Operator
-    Sum = str(eval(Operator))
-    TextIn.set(Sum)
-    Operator = ""
+class SafeCalculator:
+    """Safely evaluates basic calculator expressions without using eval()."""
 
-TxtDisplay = Entry(root, font=('arial', 20, 'bold'), textvariable=TextIn, bd=30,
-                   insertwidth=4, bg="powder blue", justify='right').grid(columnspan=4)
+    BINARY_OPERATORS = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.Mod: operator.mod,
+    }
 
-#======================================================Top Row=================================================================================================
-Btn7 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="7", command=lambda:BtnClick(7)).grid(row=1, column=0)
-Btn8 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="8", command=lambda:BtnClick(8)).grid(row=1, column=1)
-Btn9 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="9", command=lambda:BtnClick(9)).grid(row=1, column=2)
-Addition = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="+", command=lambda:BtnClick("+")).grid(row=1, column=3)
-#======================================================Mid Row=================================================================================================
-Btn4 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="4", command=lambda:BtnClick(4)).grid(row=2, column=0)
-Btn5 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="5", command=lambda:BtnClick(5)).grid(row=2, column=1)
-Btn6 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="6", command=lambda:BtnClick(6)).grid(row=2, column=2)
-Subtraction = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="-", command=lambda:BtnClick("-")).grid(row=2, column=3)
-#======================================================Bot Row==================================================================================================
-Btn1 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="1", command=lambda:BtnClick(1)).grid(row=3, column=0)
-Btn2 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="2", command=lambda:BtnClick(2)).grid(row=3, column=1)
-Btn3 = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="3", command=lambda:BtnClick(3)).grid(row=3, column=2)
-Multiply = Button(root, padx=16, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="*", command=lambda:BtnClick("*")).grid(row=3, column=3)
-#=====================================================Func Row==================================================================================================
-Btn0 = Button(root, padx=16, pady=0, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="0", command=lambda:BtnClick(0)).grid(row=4, column=0)
-BtnClear = Button(root, padx=16, pady=0, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="C", command=BtnClear).grid(row=4, column=1)
-BtnEquals = Button(root, padx=16, pady=0, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="=", command=BtnEquals).grid(row=4, column=2)
-Division = Button(root, padx=16, pady=0, bd=8, fg="black", bg="powder blue", font=('arial', 20, 'bold'), text="/", command=lambda:BtnClick("/")).grid(row=4, column=3)
-#=====================================================End Of Buttons============================================================================================
-root.mainloop()
+    UNARY_OPERATORS = {
+        ast.UAdd: operator.pos,
+        ast.USub: operator.neg,
+    }
+
+    @classmethod
+    def evaluate(cls, expression: str) -> Decimal:
+        if not expression or len(expression) > 200:
+            raise SafeExpressionError("Expression is empty or too long.")
+
+        try:
+            tree = ast.parse(expression, mode="eval")
+        except SyntaxError as error:
+            raise SafeExpressionError("Invalid expression.") from error
+
+        return cls._evaluate_node(tree.body)
+
+    @classmethod
+    def _evaluate_node(cls, node) -> Decimal:
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+                return Decimal(str(node.value))
+            raise SafeExpressionError("Only numbers are allowed.")
+
+        if isinstance(node, ast.BinOp):
+            operator_type = type(node.op)
+
+            if operator_type not in cls.BINARY_OPERATORS:
+                raise SafeExpressionError("That operation is not supported.")
+
+            left = cls._evaluate_node(node.left)
+            right = cls._evaluate_node(node.right)
+
+            try:
+                return cls.BINARY_OPERATORS[operator_type](left, right)
+            except (DivisionByZero, InvalidOperation, ZeroDivisionError) as error:
+                raise SafeExpressionError("Cannot divide by zero.") from error
+
+        if isinstance(node, ast.UnaryOp):
+            operator_type = type(node.op)
+
+            if operator_type not in cls.UNARY_OPERATORS:
+                raise SafeExpressionError("Unsupported operation.")
+
+            return cls.UNARY_OPERATORS[operator_type](cls._evaluate_node(node.operand))
+
+        raise SafeExpressionError("Invalid expression.")
+
+
+class CalculatorApp:
+    OPERATORS = "+-*/%"
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("Advanced Calculator")
+        self.root.resizable(False, False)
+        self.root.configure(bg="#20242b")
+
+        self.expression = ""
+        self.last_answer = "0"
+        self.just_calculated = False
+
+        self.display_var = tk.StringVar(value="0")
+        self.status_var = tk.StringVar(value="Ready")
+
+        self.create_interface()
+        self.bind_keyboard()
+
+    def create_interface(self):
+        display = tk.Entry(
+            self.root,
+            textvariable=self.display_var,
+            font=("Arial", 24, "bold"),
+            justify="right",
+            bd=0,
+            state="readonly",
+            readonlybackground="#11151b",
+            fg="white",
+            width=18,
+        )
+        display.grid(row=0, column=0, columnspan=4, padx=12, pady=(12, 6), ipady=16, sticky="nsew")
+
+        status = tk.Label(
+            self.root,
+            textvariable=self.status_var,
+            font=("Arial", 9),
+            anchor="e",
+            bg="#20242b",
+            fg="#a8b1bd",
+        )
+        status.grid(row=1, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
+
+        buttons = [
+            ("C", self.clear, "#c84b4b"),
+            ("⌫", self.backspace, "#525b6a"),
+            ("(", lambda: self.append("("), "#525b6a"),
+            (")", lambda: self.append(")"), "#525b6a"),
+
+            ("7", lambda: self.append("7"), "#384250"),
+            ("8", lambda: self.append("8"), "#384250"),
+            ("9", lambda: self.append("9"), "#384250"),
+            ("÷", lambda: self.append("/"), "#e19b43"),
+
+            ("4", lambda: self.append("4"), "#384250"),
+            ("5", lambda: self.append("5"), "#384250"),
+            ("6", lambda: self.append("6"), "#384250"),
+            ("×", lambda: self.append("*"), "#e19b43"),
+
+            ("1", lambda: self.append("1"), "#384250"),
+            ("2", lambda: self.append("2"), "#384250"),
+            ("3", lambda: self.append("3"), "#384250"),
+            ("−", lambda: self.append("-"), "#e19b43"),
+
+            ("0", lambda: self.append("0"), "#384250"),
+            (".", lambda: self.append("."), "#384250"),
+            ("%", lambda: self.append("%"), "#384250"),
+            ("+", lambda: self.append("+"), "#e19b43"),
+        ]
+
+        row = 2
+        column = 0
+
+        for text, command, colour in buttons:
+            button = tk.Button(
+                self.root,
+                text=text,
+                command=command,
+                font=("Arial", 18, "bold"),
+                width=4,
+                height=1,
+                bd=0,
+                relief="flat",
+                bg=colour,
+                fg="white",
+                activebackground=colour,
+                activeforeground="white",
+                cursor="hand2",
+            )
+            button.grid(row=row, column=column, padx=3, pady=3, sticky="nsew")
+
+            column += 1
+            if column == 4:
+                column = 0
+                row += 1
+
+        answer_button = tk.Button(
+            self.root,
+            text="Ans",
+            command=self.insert_answer,
+            font=("Arial", 16, "bold"),
+            bd=0,
+            bg="#525b6a",
+            fg="white",
+            activebackground="#525b6a",
+            activeforeground="white",
+            cursor="hand2",
+        )
+        answer_button.grid(row=7, column=0, padx=3, pady=(3, 12), sticky="nsew")
+
+        equals_button = tk.Button(
+            self.root,
+            text="=",
+            command=self.calculate,
+            font=("Arial", 20, "bold"),
+            bd=0,
+            bg="#3f8f63",
+            fg="white",
+            activebackground="#3f8f63",
+            activeforeground="white",
+            cursor="hand2",
+        )
+        equals_button.grid(row=7, column=1, columnspan=3, padx=3, pady=(3, 12), sticky="nsew")
+
+        for index in range(4):
+            self.root.grid_columnconfigure(index, weight=1)
+
+    def bind_keyboard(self):
+        self.root.bind_all("<Key>", self.handle_keypress)
+
+    def handle_keypress(self, event):
+        key = event.keysym
+        character = event.char
+
+        if key in ("Return", "KP_Enter", "equal"):
+            self.calculate()
+            return "break"
+
+        if key == "Escape":
+            self.clear()
+            return "break"
+
+        if key == "BackSpace":
+            self.backspace()
+            return "break"
+
+        if character in "0123456789.+-*/%()":
+            self.append(character)
+            return "break"
+
+        return "break"
+
+    def append(self, value: str):
+        if self.just_calculated and (value.isdigit() or value in ".("):
+            self.expression = ""
+            self.just_calculated = False
+
+        if value == ".":
+            self.add_decimal()
+            return
+
+        if value == "(":
+            if self.expression and (self.expression[-1].isdigit() or self.expression[-1] == ")"):
+                self.expression += "*("
+            else:
+                self.expression += "("
+
+        elif value == ")":
+            if (
+                self.expression
+                and self.expression.count("(") > self.expression.count(")")
+                and self.expression[-1] not in self.OPERATORS + "("
+            ):
+                self.expression += ")"
+
+        elif value in self.OPERATORS:
+            self.add_operator(value)
+
+        else:
+            if self.expression == "0":
+                self.expression = value
+            else:
+                self.expression += value
+
+        self.just_calculated = False
+        self.update_display()
+
+    def add_decimal(self):
+        if self.just_calculated:
+            self.expression = ""
+            self.just_calculated = False
+
+        if not self.expression or self.expression[-1] in self.OPERATORS + "(":
+            self.expression += "0."
+        else:
+            current_number = self.expression.split("+")[-1]
+            for symbol in "-*/%(":
+                current_number = current_number.split(symbol)[-1]
+
+            if "." not in current_number:
+                self.expression += "."
+
+        self.update_display()
+
+    def add_operator(self, value: str):
+        if not self.expression:
+            if value == "-":
+                self.expression = "-"
+            return
+
+        last_character = self.expression[-1]
+
+        if last_character in self.OPERATORS:
+            if value == "-" and last_character != "-":
+                self.expression += value
+            else:
+                self.expression = self.expression[:-1] + value
+        elif last_character == "(":
+            if value == "-":
+                self.expression += value
+        else:
+            self.expression += value
+
+        self.just_calculated = False
+        self.update_display()
+
+    def insert_answer(self):
+        if self.just_calculated:
+            self.expression = self.last_answer
+        elif not self.expression:
+            self.expression = self.last_answer
+        elif self.expression[-1].isdigit() or self.expression[-1] == ")":
+            self.expression += "*" + self.last_answer
+        else:
+            self.expression += self.last_answer
+
+        self.just_calculated = False
+        self.update_display()
+
+    def clear(self):
+        self.expression = ""
+        self.just_calculated = False
+        self.display_var.set("0")
+        self.status_var.set("Cleared")
+
+    def backspace(self):
+        if self.just_calculated:
+            self.clear()
+            return
+
+        self.expression = self.expression[:-1]
+        self.update_display()
+        self.status_var.set("Ready")
+
+    def calculate(self):
+        if not self.expression:
+            return
+
+        try:
+            result = SafeCalculator.evaluate(self.expression)
+            formatted_result = self.format_result(result)
+
+            self.last_answer = formatted_result
+            self.expression = formatted_result
+            self.display_var.set(formatted_result)
+            self.status_var.set("Calculation complete")
+            self.just_calculated = True
+
+        except SafeExpressionError as error:
+            self.display_var.set("Error")
+            self.status_var.set(str(error))
+            self.expression = ""
+            self.just_calculated = False
+
+    def update_display(self):
+        self.display_var.set(self.expression if self.expression else "0")
+        self.status_var.set("Ready")
+
+    @staticmethod
+    def format_result(value: Decimal) -> str:
+        if value == value.to_integral_value():
+            return str(value.quantize(Decimal("1")))
+
+        text = format(value, ".12f").rstrip("0").rstrip(".")
+
+        if text in ("", "-0"):
+            return "0"
+
+        return text
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    CalculatorApp(root)
+    root.mainloop()
